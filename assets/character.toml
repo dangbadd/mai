@@ -1,0 +1,4 @@
+# fps: frames per second; loop: restart after the last frame.
+[idle]
+fps = 4
+loop = true
