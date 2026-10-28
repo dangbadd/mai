@@ -11,3 +11,7 @@ Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 ### Domain docs
 
 Single-context: one `GLOSSARY.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Review pipeline
+
+Ponytail locally, CI on every PR, CodeRabbit and code-review only on release PRs into `main`. See `docs/agents/review-pipeline.md`.
