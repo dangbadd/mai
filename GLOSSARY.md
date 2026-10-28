@@ -22,8 +22,11 @@ _Avoid_: Floor, baseline
 ## Versions
 
 **Release**:
-An official version of Mai; the only event that raises the major number `x` in `x.y.z`.
+Any version of Mai that has been published, whatever its `x.y.z`.
 _Avoid_: Launch, ship
+
+**Major release**:
+A Release that raises `x`; made only when the owner asks for it.
 
 **Feature update**:
 A version that adds new features, raising `y`.
