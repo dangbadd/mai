@@ -1,0 +1,74 @@
+name: Code review
+
+# Full Standards + Spec review, only for release PRs into main. See docs/agents/review-pipeline.md.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Number of the release PR to review again
+        required: true
+
+concurrency:
+  group: code-review-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+  id-token: write
+
+jobs:
+  review:
+    if: github.event_name == 'workflow_dispatch' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number || inputs.pr }}
+    steps:
+      - name: Resolve PR
+        id: pr
+        run: |
+          [[ "$PR" =~ ^[0-9]+$ ]] || { echo "::error::pr must be a number"; exit 1; }
+          gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json baseRefName,headRefOid \
+            --jq '"base=\(.baseRefName)\nhead=\(.headRefOid)"' >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.head }}
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The workflow token, scoped by `permissions:` above, so the Claude GitHub App is not required.
+          github_token: ${{ github.token }}
+          plugin_marketplaces: https://github.com/mattpocock/skills.git
+          plugins: mattpocock-skills@mattpocock
+          prompt: |
+            Run /mattpocock-skills:code-review on pull request #${{ env.PR }} of ${{ github.repository }}.
+
+            - Fixed point: origin/${{ steps.pr.outputs.base }}. HEAD is the PR head.
+            - Spec: the issue on the `Spec: #N` line of the PR body (`gh pr view ${{ env.PR }} --json body`).
+              The tickets it delivers are the issues on its `Closes #N` lines. Read them with `gh issue view`.
+            - Write the final aggregated report, in English, to `review.md` in the repository root.
+            - Do not post comments, edit any other file, commit or push.
+          claude_args: >-
+            --allowedTools "Read,Grep,Glob,Task,Agent,Write,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git rev-parse:*),Bash(gh issue view:*),Bash(gh pr view:*)"
+
+      - name: Post or update the review comment
+        run: |
+          test -s review.md || { echo "::error::review.md was not written"; exit 1; }
+          marker='<!-- mai-code-review -->'
+          body="$marker"$'\n'"$(cat review.md)"
+          # Only ever touch our own marked comment, never CodeRabbit's or a human's.
+          id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -n1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -f body="$body" > /dev/null
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -f body="$body" > /dev/null
+          fi
