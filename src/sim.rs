@@ -48,7 +48,13 @@ impl Character {
     /// `clips` must hold every Animation in `assets::REQUIRED`.
     pub fn new(clips: HashMap<String, Clip>, world: &World) -> Self {
         let x = world.left + (world.right - world.left) / 2;
-        Self { clips, animation: "idle", played: Duration::ZERO, x, y: world.ground_y }
+        Self {
+            clips,
+            animation: "idle",
+            played: Duration::ZERO,
+            x,
+            y: world.ground_y,
+        }
     }
 
     /// Advances the simulation by `elapsed` and returns what to draw.
@@ -68,6 +74,11 @@ impl Character {
         } else {
             shown.min(clip.frames as u64 - 1)
         };
-        Draw { animation: self.animation, frame: frame as u32, x: self.x, y: self.y }
+        Draw {
+            animation: self.animation,
+            frame: frame as u32,
+            x: self.x,
+            y: self.y,
+        }
     }
 }

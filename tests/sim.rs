@@ -3,10 +3,21 @@ use std::time::Duration;
 
 use mai::sim::{Character, Clip, World};
 
-const WORLD: World = World { ground_y: 1040, left: 0, right: 1920 };
+const WORLD: World = World {
+    ground_y: 1040,
+    left: 0,
+    right: 1920,
+};
 
 fn idle_at(fps: u32, frames: u32) -> Character {
-    let clips = HashMap::from([("idle".to_string(), Clip { frames, fps, looping: true })]);
+    let clips = HashMap::from([(
+        "idle".to_string(),
+        Clip {
+            frames,
+            fps,
+            looping: true,
+        },
+    )]);
     Character::new(clips, &WORLD)
 }
 
@@ -52,7 +63,14 @@ fn many_small_steps_do_not_drift() {
 
 #[test]
 fn non_looping_animation_stops_on_its_last_frame() {
-    let clips = HashMap::from([("idle".to_string(), Clip { frames: 3, fps: 10, looping: false })]);
+    let clips = HashMap::from([(
+        "idle".to_string(),
+        Clip {
+            frames: 3,
+            fps: 10,
+            looping: false,
+        },
+    )]);
     let mut mai = Character::new(clips, &WORLD);
 
     assert_eq!(mai.step(&[], ms(1000), &WORLD, &mut no_random).frame, 2);

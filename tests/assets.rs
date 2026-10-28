@@ -17,7 +17,8 @@ fn write_png(path: &Path, width: u32, height: u32) {
     enc.set_color(png::ColorType::Rgba);
     enc.set_depth(png::BitDepth::Eight);
     let mut w = enc.write_header().unwrap();
-    w.write_image_data(&vec![255; (width * height * 4) as usize]).unwrap();
+    w.write_image_data(&vec![255; (width * height * 4) as usize])
+        .unwrap();
 }
 
 #[test]
