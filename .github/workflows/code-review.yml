@@ -44,6 +44,8 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The workflow token, scoped by `permissions:` above, so the Claude GitHub App is not required.
+          github_token: ${{ github.token }}
           plugin_marketplaces: https://github.com/mattpocock/skills.git
           plugins: mattpocock-skills@mattpocock
           prompt: |
@@ -55,7 +57,7 @@ jobs:
             - Write the final aggregated report, in English, to `review.md` in the repository root.
             - Do not post comments, edit any other file, commit or push.
           claude_args: >-
-            --allowedTools "Read,Grep,Glob,Agent,Write,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git rev-parse:*),Bash(gh issue view:*),Bash(gh pr view:*)"
+            --allowedTools "Read,Grep,Glob,Task,Agent,Write,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git rev-parse:*),Bash(gh issue view:*),Bash(gh pr view:*)"
 
       - name: Post or update the review comment
         run: |
