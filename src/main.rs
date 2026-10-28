@@ -62,7 +62,12 @@ fn main() {
         };
 
         if let Err(e) = run(animations) {
-            MessageBoxW(None, &HSTRING::from(e.message()), w!("Mai"), MB_OK | MB_ICONERROR);
+            MessageBoxW(
+                None,
+                &HSTRING::from(e.message()),
+                w!("Mai"),
+                MB_OK | MB_ICONERROR,
+            );
         }
     }
 }
@@ -97,7 +102,10 @@ unsafe fn run(animations: HashMap<String, Animation>) -> windows::core::Result<(
         )?;
 
         let (mem_dc, bits) = create_canvas(size)?;
-        let clips: HashMap<String, Clip> = animations.iter().map(|(n, a)| (n.clone(), a.clip)).collect();
+        let clips: HashMap<String, Clip> = animations
+            .iter()
+            .map(|(n, a)| (n.clone(), a.clip))
+            .collect();
         // Consumes the source strips so only the display-size frames stay in memory.
         let frames = animations
             .into_iter()
@@ -146,7 +154,11 @@ unsafe fn primary_world() -> windows::core::Result<World> {
             SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
         )?;
     }
-    Ok(World { ground_y: area.bottom, left: area.left, right: area.right })
+    Ok(World {
+        ground_y: area.bottom,
+        left: area.left,
+        right: area.right,
+    })
 }
 
 unsafe fn scaled_size() -> windows::core::Result<i32> {
@@ -231,7 +243,12 @@ unsafe fn add_tray_icon(hwnd: HWND) -> windows::core::Result<()> {
 }
 
 fn tray_data(hwnd: HWND) -> NOTIFYICONDATAW {
-    NOTIFYICONDATAW { cbSize: size_of::<NOTIFYICONDATAW>() as u32, hWnd: hwnd, uID: 1, ..Default::default() }
+    NOTIFYICONDATAW {
+        cbSize: size_of::<NOTIFYICONDATAW>() as u32,
+        hWnd: hwnd,
+        uID: 1,
+        ..Default::default()
+    }
 }
 
 /// Steps the simulation by the real time since the last tick and redraws only if the frame changed.
@@ -239,7 +256,9 @@ fn tick() {
     APP.with_borrow_mut(|app| {
         let Some(app) = app else { return };
         let now = Instant::now();
-        let draw = app.character.step(&[], now - app.last_tick, &app.world, &mut rand_u32);
+        let draw = app
+            .character
+            .step(&[], now - app.last_tick, &app.world, &mut rand_u32);
         app.last_tick = now;
         if app.last_draw != Some(draw) {
             app.last_draw = Some(draw);
@@ -252,8 +271,14 @@ unsafe fn present(app: &App, draw: Draw) {
     let frame = &app.frames[draw.animation][draw.frame as usize];
     unsafe {
         std::ptr::copy_nonoverlapping(frame.as_ptr(), app.bits, frame.len());
-        let pos = POINT { x: draw.x - app.size / 2, y: draw.y - app.size };
-        let size = SIZE { cx: app.size, cy: app.size };
+        let pos = POINT {
+            x: draw.x - app.size / 2,
+            y: draw.y - app.size,
+        };
+        let size = SIZE {
+            cx: app.size,
+            cy: app.size,
+        };
         let blend = BLENDFUNCTION {
             BlendOp: AC_SRC_OVER as u8,
             SourceConstantAlpha: 255,
@@ -276,7 +301,10 @@ unsafe fn present(app: &App, draw: Draw) {
 
 /// Not consumed yet (idle needs no randomness); clock nanos are enough for a toy's choices later.
 fn rand_u32() -> u32 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().subsec_nanos()
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .subsec_nanos()
 }
 
 unsafe fn show_tray_menu(hwnd: HWND) {
@@ -287,7 +315,15 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         let _ = GetCursorPos(&mut cursor);
         // Without this the menu does not close when the user clicks elsewhere.
         let _ = SetForegroundWindow(hwnd);
-        let cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, cursor.x, cursor.y, None, hwnd, None);
+        let cmd = TrackPopupMenu(
+            menu,
+            TPM_RETURNCMD | TPM_NONOTIFY,
+            cursor.x,
+            cursor.y,
+            None,
+            hwnd,
+            None,
+        );
         // Documented workaround so the next tray click opens the menu instead of only closing it.
         let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
         let _ = DestroyMenu(menu);
@@ -302,7 +338,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
     unsafe {
         match msg {
             WM_TIMER if wparam.0 == TIMER_ID => tick(),
-            WM_TRAY if matches!(lparam.0 as u32, WM_RBUTTONUP | WM_CONTEXTMENU) => show_tray_menu(hwnd),
+            WM_TRAY if matches!(lparam.0 as u32, WM_RBUTTONUP | WM_CONTEXTMENU) => {
+                show_tray_menu(hwnd)
+            }
             WM_DESTROY => PostQuitMessage(0),
             _ => return DefWindowProcW(hwnd, msg, wparam, lparam),
         }
