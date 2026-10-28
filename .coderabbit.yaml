@@ -7,6 +7,8 @@ reviews:
   # Keep the summary in CodeRabbit's own walkthrough comment, never in the PR body.
   high_level_summary_in_walkthrough: true
   poem: false
+  # No "Review skipped" comment on ticket PRs into release/*, which are skipped by design.
+  review_status: false
   # Spec conformance belongs to the code-review workflow.
   assess_linked_issues: false
   auto_review:
