@@ -26,3 +26,7 @@ One `release/v<x.y.z>` branch per Release; one ticket branch and PR into it per 
 2. Fix every finding; list any you deliberately skip, with the reason, in the PR body.
 3. Re-run `cargo test`.
 4. Title the PR per `docs/agents/pr-naming.md` and write the body with the `pr` skill.
+
+### Review pipeline
+
+Ponytail locally, CI on every PR, CodeRabbit and code-review only on release PRs into `main`. See `docs/agents/review-pipeline.md`.

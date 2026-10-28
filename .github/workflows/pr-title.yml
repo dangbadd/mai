@@ -1,0 +1,29 @@
+name: PR title
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions: {}
+
+jobs:
+  title:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check title against docs/agents/pr-naming.md
+        env:
+          # Passed through env, never interpolated into the script, so a title cannot inject shell.
+          TITLE: ${{ github.event.pull_request.title }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+        run: |
+          if [ "$BASE" = main ]; then
+            re='^release\(v[0-9]+\.[0-9]+\.[0-9]+\): .+ \(#[0-9]+\)$'
+            want='release(v<x.y.z>): <Spec title> (#<spec>)'
+          else
+            re='^(feat|fix|docs|chore)\(v[0-9]+\.[0-9]+\.[0-9]+\): [A-Z].*[^.]( \(#[0-9]+\))?$'
+            want='<type>(v<x.y.z>): <Description> (#<issue>)'
+          fi
+          if [[ ! "$TITLE" =~ $re ]]; then
+            echo "::error::PR title must look like: $want (see docs/agents/pr-naming.md)"
+            exit 1
+          fi
