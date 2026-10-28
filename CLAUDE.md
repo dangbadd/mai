@@ -11,3 +11,7 @@ Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 ### Domain docs
 
 Single-context: one `GLOSSARY.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Branches
+
+One branch and PR per ticket, named `<type>/v<x.y.z>-<issue>-<slug>`. See `docs/agents/branch-naming.md`.
