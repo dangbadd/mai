@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::sim::Clip;
 
 /// Animations every asset folder must provide. Grows as later tickets add behaviour.
-pub const REQUIRED: &[&str] = &["idle"];
+pub const REQUIRED: &[&str] = &["idle", "walk", "sit"];
 
 pub struct Animation {
     pub clip: Clip,
