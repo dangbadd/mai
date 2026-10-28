@@ -31,7 +31,8 @@ struct Entry {
 pub fn load(dir: &Path) -> Result<HashMap<String, Animation>, AssetError> {
     let manifest_path = dir.join("character.toml");
     let text = std::fs::read_to_string(&manifest_path).map_err(|e| err(&manifest_path, e))?;
-    let manifest: HashMap<String, Entry> = toml::from_str(&text).map_err(|e| err(&manifest_path, e))?;
+    let manifest: HashMap<String, Entry> =
+        toml::from_str(&text).map_err(|e| err(&manifest_path, e))?;
 
     REQUIRED
         .iter()
@@ -46,10 +47,24 @@ pub fn load(dir: &Path) -> Result<HashMap<String, Animation>, AssetError> {
                 return Err(err(&png_path, reason));
             }
             if entry.fps == 0 {
-                return Err(err(&manifest_path, format!("[{name}] fps must be greater than 0")));
+                return Err(err(
+                    &manifest_path,
+                    format!("[{name}] fps must be greater than 0"),
+                ));
             }
-            let clip = Clip { frames: width / height, fps: entry.fps, looping: entry.looping };
-            Ok((name.to_string(), Animation { clip, frame_size: height, rgba }))
+            let clip = Clip {
+                frames: width / height,
+                fps: entry.fps,
+                looping: entry.looping,
+            };
+            Ok((
+                name.to_string(),
+                Animation {
+                    clip,
+                    frame_size: height,
+                    rgba,
+                },
+            ))
         })
         .collect()
 }
@@ -57,19 +72,27 @@ pub fn load(dir: &Path) -> Result<HashMap<String, Animation>, AssetError> {
 fn read_rgba(path: &Path) -> Result<(u32, u32, Vec<u8>), Box<dyn std::error::Error>> {
     let mut decoder = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(path)?));
     // Expand palette/low bit depths and 16-bit channels to 8-bit, then add alpha below if missing.
-    decoder.set_transformations(png::Transformations::normalize_to_color8() | png::Transformations::ALPHA);
+    decoder.set_transformations(
+        png::Transformations::normalize_to_color8() | png::Transformations::ALPHA,
+    );
     let mut reader = decoder.read_info()?;
     let mut buf = vec![0; reader.output_buffer_size().ok_or("image too large")?];
     let info = reader.next_frame(&mut buf)?;
     buf.truncate(info.buffer_size());
     let rgba = match info.color_type {
         png::ColorType::Rgba => buf,
-        png::ColorType::GrayscaleAlpha => buf.chunks(2).flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
+        png::ColorType::GrayscaleAlpha => buf
+            .chunks(2)
+            .flat_map(|p| [p[0], p[0], p[0], p[1]])
+            .collect(),
         other => return Err(format!("unsupported color type {other:?}").into()),
     };
     Ok((info.width, info.height, rgba))
 }
 
 fn err(file: &Path, reason: impl std::fmt::Display) -> AssetError {
-    AssetError { file: file.to_path_buf(), reason: reason.to_string() }
+    AssetError {
+        file: file.to_path_buf(),
+        reason: reason.to_string(),
+    }
 }
