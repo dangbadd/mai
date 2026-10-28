@@ -5,7 +5,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use mai::assets::{self, Animation};
 use mai::sim::{Character, Clip, Draw, World};
@@ -37,6 +37,8 @@ struct App {
     bits: *mut u8,
     last_draw: Option<Draw>,
     last_tick: Instant,
+    /// Period the step timer currently runs at.
+    interval: Duration,
 }
 
 thread_local! {
@@ -77,8 +79,8 @@ fn main() {
 
 unsafe fn run(animations: HashMap<String, Animation>) -> windows::core::Result<()> {
     unsafe {
-        let world = primary_world()?;
         let size = scaled_size()?;
+        let world = primary_world(size)?;
 
         let instance = GetModuleHandleW(None)?;
         let class = WNDCLASSW {
@@ -114,7 +116,6 @@ unsafe fn run(animations: HashMap<String, Animation>) -> windows::core::Result<(
             .into_iter()
             .map(|(name, a)| (name, scale_frames(&a, size as u32)))
             .collect();
-        let fps = clips["idle"].fps;
         let character = Character::new(clips, &world);
 
         APP.with_borrow_mut(|app| {
@@ -128,6 +129,7 @@ unsafe fn run(animations: HashMap<String, Animation>) -> windows::core::Result<(
                 bits,
                 last_draw: None,
                 last_tick: Instant::now(),
+                interval: Duration::ZERO,
             })
         });
         tick();
@@ -137,8 +139,6 @@ unsafe fn run(animations: HashMap<String, Animation>) -> windows::core::Result<(
             Ordering::Relaxed,
         );
         add_tray_icon(hwnd)?;
-        // shortcut: fixed to idle's fps; schedule per Animation once other Animations exist.
-        SetTimer(Some(hwnd), TIMER_ID, 1000 / fps, None);
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -150,8 +150,9 @@ unsafe fn run(animations: HashMap<String, Animation>) -> windows::core::Result<(
 }
 
 /// Ground and screen edges from the primary monitor's work area, whose bottom is the taskbar's top
-/// edge when the taskbar sits at the bottom.
-unsafe fn primary_world() -> windows::core::Result<World> {
+/// edge when the taskbar sits at the bottom. Edges are inset by half the Character so it stays
+/// fully on screen.
+unsafe fn primary_world(size: i32) -> windows::core::Result<World> {
     let mut area = RECT::default();
     unsafe {
         SystemParametersInfoW(
@@ -163,8 +164,8 @@ unsafe fn primary_world() -> windows::core::Result<World> {
     }
     Ok(World {
         ground_y: area.bottom,
-        left: area.left,
-        right: area.right,
+        left: area.left + size / 2,
+        right: area.right - size / 2,
     })
 }
 
@@ -258,7 +259,8 @@ fn tray_data(hwnd: HWND) -> NOTIFYICONDATAW {
     }
 }
 
-/// Steps the simulation by the real time since the last tick and redraws only if the frame changed.
+/// Steps the simulation by the real time since the last tick, redraws only if the frame or position
+/// changed, and re-arms the timer when the step rate changes (fast while walking, slow otherwise).
 fn tick() {
     APP.with_borrow_mut(|app| {
         let Some(app) = app else { return };
@@ -271,13 +273,28 @@ fn tick() {
             app.last_draw = Some(draw);
             unsafe { present(app, draw) };
         }
+        let interval = app.character.next_step_in();
+        if interval != app.interval {
+            app.interval = interval;
+            unsafe { SetTimer(Some(app.hwnd), TIMER_ID, interval.as_millis() as u32, None) };
+        }
     });
 }
 
 unsafe fn present(app: &App, draw: Draw) {
     let frame = &app.frames[draw.animation][draw.frame as usize];
     unsafe {
-        std::ptr::copy_nonoverlapping(frame.as_ptr(), app.bits, frame.len());
+        let bits = std::slice::from_raw_parts_mut(app.bits, frame.len());
+        if draw.mirrored {
+            let row = app.size as usize * 4;
+            for (dst, src) in bits.chunks_mut(row).zip(frame.chunks(row)) {
+                for (d, s) in dst.chunks_mut(4).zip(src.chunks(4).rev()) {
+                    d.copy_from_slice(s);
+                }
+            }
+        } else {
+            bits.copy_from_slice(frame);
+        }
         let pos = POINT {
             x: draw.x - app.size / 2,
             y: draw.y - app.size,
@@ -306,12 +323,10 @@ unsafe fn present(app: &App, draw: Draw) {
     }
 }
 
-/// Not consumed yet (idle needs no randomness); clock nanos are enough for a toy's choices later.
+/// Each `RandomState` gets fresh SipHash keys, so hashing a constant yields a new random value.
 fn rand_u32() -> u32 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .subsec_nanos()
+    use std::hash::BuildHasher;
+    std::hash::RandomState::new().hash_one(0u8) as u32
 }
 
 unsafe fn show_tray_menu(hwnd: HWND) {

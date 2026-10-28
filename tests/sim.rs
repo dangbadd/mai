@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use mai::sim::{Character, Clip, World};
+use mai::sim::{BEHAVIOURS, Character, Clip, World};
 
 const WORLD: World = World {
     ground_y: 1040,
@@ -9,24 +9,45 @@ const WORLD: World = World {
     right: 1920,
 };
 
-fn idle_at(fps: u32, frames: u32) -> Character {
-    let clips = HashMap::from([(
-        "idle".to_string(),
-        Clip {
-            frames,
-            fps,
-            looping: true,
-        },
-    )]);
+fn clip(fps: u32, frames: u32) -> Clip {
+    Clip {
+        frames,
+        fps,
+        looping: true,
+    }
+}
+
+/// Every required Animation, with `idle` timed as given.
+fn character(idle: Clip) -> Character {
+    let clips = HashMap::from([
+        ("idle".to_string(), idle),
+        ("walk".to_string(), clip(8, 4)),
+        ("sit".to_string(), clip(2, 2)),
+    ]);
     Character::new(clips, &WORLD)
+}
+
+fn idle_at(fps: u32, frames: u32) -> Character {
+    character(clip(fps, frames))
 }
 
 fn ms(n: u64) -> Duration {
     Duration::from_millis(n)
 }
 
+/// Always draws 0, which picks the first behaviour, `idle`, for the shortest time.
 fn no_random() -> u32 {
-    unreachable!("idle needs no randomness yet")
+    0
+}
+
+/// xorshift32: a tiny deterministic generator for seeded runs.
+fn seeded(mut state: u32) -> impl FnMut() -> u32 {
+    move || {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        state
+    }
 }
 
 #[test]
@@ -63,15 +84,109 @@ fn many_small_steps_do_not_drift() {
 
 #[test]
 fn non_looping_animation_stops_on_its_last_frame() {
-    let clips = HashMap::from([(
-        "idle".to_string(),
-        Clip {
-            frames: 3,
-            fps: 10,
-            looping: false,
-        },
-    )]);
-    let mut mai = Character::new(clips, &WORLD);
+    let mut mai = character(Clip {
+        frames: 3,
+        fps: 10,
+        looping: false,
+    });
 
     assert_eq!(mai.step(&[], ms(1000), &WORLD, &mut no_random).frame, 2);
+}
+
+/// Which Animation is shown after each of `steps` 100ms steps.
+fn sequence(seed: u32, steps: usize) -> Vec<&'static str> {
+    let mut mai = idle_at(4, 4);
+    let mut random = seeded(seed);
+    (0..steps)
+        .map(|_| mai.step(&[], ms(100), &WORLD, &mut random).animation)
+        .collect()
+}
+
+#[test]
+fn same_seed_gives_the_same_animation_sequence() {
+    let a = sequence(7, 5_000);
+    assert_eq!(a, sequence(7, 5_000));
+    for name in ["idle", "walk", "sit"] {
+        assert!(a.contains(&name), "{name} never chosen");
+    }
+    assert_ne!(a, sequence(8, 5_000));
+}
+
+#[test]
+fn time_spent_in_each_animation_follows_the_weights() {
+    // Every behaviour draws its length from the same range, so time share tracks weight share.
+    let shown = sequence(12345, 2_000_000); // ~200_000s, tens of thousands of choices
+    let total: u32 = BEHAVIOURS.iter().map(|b| b.1).sum();
+    for &(name, weight) in BEHAVIOURS {
+        let share = shown.iter().filter(|&&a| a == name).count() as f64 / shown.len() as f64;
+        let expected = weight as f64 / total as f64;
+        assert!(
+            (share - expected).abs() < 0.02,
+            "{name}: {share} vs {expected}"
+        );
+    }
+}
+
+const NARROW: World = World {
+    ground_y: 1040,
+    left: 900,
+    right: 1000,
+};
+
+/// Starts a long walk (rolls: walk, longest length, then the direction roll), then idles.
+fn walking(direction_roll: u32) -> (Character, impl FnMut() -> u32) {
+    let mut rolls = vec![3, 4999, direction_roll].into_iter();
+    let mai = Character::new(
+        HashMap::from([
+            ("idle".to_string(), clip(4, 4)),
+            ("walk".to_string(), clip(8, 4)),
+            ("sit".to_string(), clip(2, 2)),
+        ]),
+        &NARROW,
+    );
+    (mai, move || rolls.next().unwrap_or(0))
+}
+
+/// Positions and mirroring over the first 2s of walking, stepped at 30Hz.
+fn walk_path(direction_roll: u32) -> Vec<(i32, bool)> {
+    let (mut mai, mut random) = walking(direction_roll);
+    mai.step(&[], ms(0), &NARROW, &mut random);
+    (0..60)
+        .map(|_| {
+            let d = mai.step(&[], ms(33), &NARROW, &mut random);
+            assert_eq!(d.animation, "walk");
+            (d.x, d.mirrored)
+        })
+        .collect()
+}
+
+#[test]
+fn walking_into_the_right_edge_turns_around() {
+    let path = walk_path(0);
+    assert!(path.iter().all(|&(x, _)| (900..=1000).contains(&x)));
+    assert!(!path[0].1, "faces right on the way out");
+    let turn = path.iter().position(|&(_, m)| m).expect("turns around");
+    assert_eq!(path[turn].0, 1000, "turns at the right edge");
+    assert!(path.last().unwrap().0 < 1000, "walks back");
+}
+
+#[test]
+fn walking_into_the_left_edge_turns_around() {
+    let path = walk_path(1);
+    assert!(path.iter().all(|&(x, _)| (900..=1000).contains(&x)));
+    assert!(path[0].1, "faces left on the way out");
+    let turn = path.iter().position(|&(_, m)| !m).expect("turns around");
+    assert_eq!(path[turn].0, 900, "turns at the left edge");
+    assert!(path.last().unwrap().0 > 900, "walks back");
+}
+
+#[test]
+fn walking_steps_at_30hz_while_standing_steps_at_sprite_fps() {
+    let mut mai = idle_at(4, 4);
+    mai.step(&[], ms(0), &WORLD, &mut no_random);
+    assert_eq!(mai.next_step_in(), ms(250));
+
+    let (mut mai, mut random) = walking(0);
+    mai.step(&[], ms(0), &NARROW, &mut random);
+    assert_eq!(mai.next_step_in(), Duration::from_secs(1) / 30);
 }

@@ -21,11 +21,30 @@ fn write_png(path: &Path, width: u32, height: u32) {
         .unwrap();
 }
 
+const MANIFEST: &str = "[idle]
+fps = 8
+loop = true
+[walk]
+fps = 8
+loop = true
+[sit]
+fps = 8
+loop = true
+";
+
+/// A folder holding every required Animation as a 4-frame 64px strip.
+fn valid(name: &str) -> PathBuf {
+    let dir = fixture(name);
+    for anim in assets::REQUIRED {
+        write_png(&dir.join(format!("{anim}.png")), 64 * 4, 64);
+    }
+    fs::write(dir.join("character.toml"), MANIFEST).unwrap();
+    dir
+}
+
 #[test]
 fn valid_folder_loads_idle_with_frame_count_fps_and_loop() {
-    let dir = fixture("valid");
-    write_png(&dir.join("idle.png"), 64 * 4, 64);
-    fs::write(dir.join("character.toml"), "[idle]\nfps = 8\nloop = true\n").unwrap();
+    let dir = valid("valid");
 
     let anims = assets::load(&dir).unwrap();
     let idle = &anims["idle"];
@@ -45,8 +64,8 @@ fn load_err(dir: &Path) -> assets::AssetError {
 
 #[test]
 fn missing_png_names_the_png() {
-    let dir = fixture("missing-png");
-    fs::write(dir.join("character.toml"), "[idle]\nfps = 8\nloop = true\n").unwrap();
+    let dir = valid("missing-png");
+    fs::remove_file(dir.join("idle.png")).unwrap();
 
     let e = load_err(&dir);
     assert_eq!(e.file, dir.join("idle.png"));
@@ -55,9 +74,8 @@ fn missing_png_names_the_png() {
 
 #[test]
 fn width_not_a_multiple_of_height_names_the_png() {
-    let dir = fixture("bad-width");
+    let dir = valid("bad-width");
     write_png(&dir.join("idle.png"), 100, 64);
-    fs::write(dir.join("character.toml"), "[idle]\nfps = 8\nloop = true\n").unwrap();
 
     let e = load_err(&dir);
     assert_eq!(e.file, dir.join("idle.png"));
@@ -88,7 +106,7 @@ fn animation_missing_from_manifest_names_character_toml() {
 
 #[test]
 fn opaque_rgb_png_loads_as_fully_opaque_rgba() {
-    let dir = fixture("rgb");
+    let dir = valid("rgb");
     let file = fs::File::create(dir.join("idle.png")).unwrap();
     let mut enc = png::Encoder::new(file, 2, 1);
     enc.set_color(png::ColorType::Rgb);
@@ -97,9 +115,30 @@ fn opaque_rgb_png_loads_as_fully_opaque_rgba() {
         .unwrap()
         .write_image_data(&[10, 20, 30, 40, 50, 60])
         .unwrap();
-    fs::write(dir.join("character.toml"), "[idle]\nfps = 8\nloop = true\n").unwrap();
 
     let idle = &assets::load(&dir).unwrap()["idle"];
     assert_eq!(idle.clip.frames, 2);
     assert_eq!(idle.rgba, [10, 20, 30, 255, 40, 50, 60, 255]);
+}
+
+#[test]
+fn walk_missing_from_manifest_is_an_asset_error() {
+    let dir = valid("no-walk");
+    fs::write(
+        dir.join("character.toml"),
+        MANIFEST.replace("[walk]", "[walking]"),
+    )
+    .unwrap();
+
+    let e = load_err(&dir);
+    assert_eq!(e.file, dir.join("character.toml"));
+    assert!(e.reason.contains("walk"), "{}", e.reason);
+}
+
+#[test]
+fn missing_sit_png_names_the_png() {
+    let dir = valid("no-sit");
+    fs::remove_file(dir.join("sit.png")).unwrap();
+
+    assert_eq!(load_err(&dir).file, dir.join("sit.png"));
 }
