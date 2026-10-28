@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use mai::sim::{BEHAVIOURS, Character, Clip, World};
+use mai::sim::{ANIMATION_WEIGHTS, Character, Clip, World};
 
 const WORLD: World = World {
     ground_y: 1040,
@@ -18,24 +18,24 @@ fn clip(fps: u32, frames: u32) -> Clip {
 }
 
 /// Every required Animation, with `idle` timed as given.
-fn character(idle: Clip) -> Character {
+fn character(idle: Clip, world: &World) -> Character {
     let clips = HashMap::from([
         ("idle".to_string(), idle),
         ("walk".to_string(), clip(8, 4)),
         ("sit".to_string(), clip(2, 2)),
     ]);
-    Character::new(clips, &WORLD)
+    Character::new(clips, world)
 }
 
 fn idle_at(fps: u32, frames: u32) -> Character {
-    character(clip(fps, frames))
+    character(clip(fps, frames), &WORLD)
 }
 
 fn ms(n: u64) -> Duration {
     Duration::from_millis(n)
 }
 
-/// Always draws 0, which picks the first behaviour, `idle`, for the shortest time.
+/// Always draws 0, which picks the first Animation, `idle`, for the shortest hold.
 fn no_random() -> u32 {
     0
 }
@@ -84,11 +84,14 @@ fn many_small_steps_do_not_drift() {
 
 #[test]
 fn non_looping_animation_stops_on_its_last_frame() {
-    let mut mai = character(Clip {
-        frames: 3,
-        fps: 10,
-        looping: false,
-    });
+    let mut mai = character(
+        Clip {
+            frames: 3,
+            fps: 10,
+            looping: false,
+        },
+        &WORLD,
+    );
 
     assert_eq!(mai.step(&[], ms(1000), &WORLD, &mut no_random).frame, 2);
 }
@@ -114,10 +117,10 @@ fn same_seed_gives_the_same_animation_sequence() {
 
 #[test]
 fn time_spent_in_each_animation_follows_the_weights() {
-    // Every behaviour draws its length from the same range, so time share tracks weight share.
+    // Every Animation draws its hold time from the same range, so time share tracks weight share.
     let shown = sequence(12345, 2_000_000); // ~200_000s, tens of thousands of choices
-    let total: u32 = BEHAVIOURS.iter().map(|b| b.1).sum();
-    for &(name, weight) in BEHAVIOURS {
+    let total: u32 = ANIMATION_WEIGHTS.iter().map(|w| w.1).sum();
+    for &(name, weight) in ANIMATION_WEIGHTS {
         let share = shown.iter().filter(|&&a| a == name).count() as f64 / shown.len() as f64;
         let expected = weight as f64 / total as f64;
         assert!(
@@ -136,15 +139,9 @@ const NARROW: World = World {
 /// Starts a long walk (rolls: walk, longest length, then the direction roll), then idles.
 fn walking(direction_roll: u32) -> (Character, impl FnMut() -> u32) {
     let mut rolls = vec![3, 4999, direction_roll].into_iter();
-    let mai = Character::new(
-        HashMap::from([
-            ("idle".to_string(), clip(4, 4)),
-            ("walk".to_string(), clip(8, 4)),
-            ("sit".to_string(), clip(2, 2)),
-        ]),
-        &NARROW,
-    );
-    (mai, move || rolls.next().unwrap_or(0))
+    (character(clip(4, 4), &NARROW), move || {
+        rolls.next().unwrap_or(0)
+    })
 }
 
 /// Positions and mirroring over the first 2s of walking, stepped at 30Hz.

@@ -9,11 +9,11 @@ pub struct Clip {
 use std::collections::HashMap;
 use std::time::Duration;
 
-/// Behaviours the Character picks between on its own, with their relative weights.
-pub const BEHAVIOURS: &[(&str, u32)] = &[("idle", 3), ("walk", 2), ("sit", 1)];
-/// How long one chosen behaviour lasts: `MIN_BEHAVIOUR` plus up to `BEHAVIOUR_SPREAD`.
-const MIN_BEHAVIOUR: Duration = Duration::from_secs(3);
-const BEHAVIOUR_SPREAD: Duration = Duration::from_secs(5);
+/// Animations the Character picks between on its own, with their relative weights.
+pub const ANIMATION_WEIGHTS: &[(&str, u32)] = &[("idle", 3), ("walk", 2), ("sit", 1)];
+/// How long one chosen Animation is held: `MIN_HOLD` plus up to `HOLD_SPREAD`.
+const MIN_HOLD: Duration = Duration::from_secs(3);
+const HOLD_SPREAD: Duration = Duration::from_secs(5);
 /// Walking speed in screen pixels per second.
 const WALK_SPEED: f64 = 60.0;
 /// How often position is updated while walking, independent of the sprite's fps.
@@ -53,8 +53,8 @@ pub struct Character {
     animation: &'static str,
     /// Time since the current Animation started; frames derive from it so steps never drift.
     played: Duration,
-    /// Time left before the next behaviour is chosen.
-    remaining: Duration,
+    /// Time left before the next Animation is chosen.
+    until_next_choice: Duration,
     facing_left: bool,
     x: f64,
     y: i32,
@@ -68,7 +68,7 @@ impl Character {
             clips,
             animation: "idle",
             played: Duration::ZERO,
-            remaining: Duration::ZERO,
+            until_next_choice: Duration::ZERO,
             facing_left: false,
             x: x as f64,
             y: world.ground_y,
@@ -85,11 +85,11 @@ impl Character {
     ) -> Draw {
         let _ = events;
         self.played += elapsed;
-        if self.animation == "walk" {
+        if self.walking() {
             self.walk(elapsed, world);
         }
-        self.remaining = self.remaining.saturating_sub(elapsed);
-        if self.remaining.is_zero() {
+        self.until_next_choice = self.until_next_choice.saturating_sub(elapsed);
+        if self.until_next_choice.is_zero() {
             self.choose(random);
         }
 
@@ -105,18 +105,22 @@ impl Character {
             frame: frame as u32,
             x: self.x.round() as i32,
             y: self.y,
-            mirrored: self.animation == "walk" && self.facing_left,
+            mirrored: self.walking() && self.facing_left,
         }
     }
 
     /// How long the shell may wait before the next step changes what is drawn.
     pub fn next_step_in(&self) -> Duration {
-        let fps = if self.animation == "walk" {
+        let fps = if self.walking() {
             MOVE_HZ
         } else {
             self.clips[self.animation].fps
         };
         Duration::from_secs(1) / fps
+    }
+
+    fn walking(&self) -> bool {
+        self.animation == "walk"
     }
 
     fn walk(&mut self, elapsed: Duration, world: &World) {
@@ -135,26 +139,26 @@ impl Character {
         }
     }
 
-    /// Picks the next behaviour by weight; picking the current one again keeps its frames running.
+    /// Picks the next Animation by weight; picking the current one again keeps its frames running.
     fn choose(&mut self, random: &mut dyn FnMut() -> u32) {
-        let total: u32 = BEHAVIOURS.iter().map(|b| b.1).sum();
+        let total: u32 = ANIMATION_WEIGHTS.iter().map(|w| w.1).sum();
         let mut roll = random() % total;
-        let mut name = BEHAVIOURS[0].0;
-        for &(candidate, weight) in BEHAVIOURS {
+        let mut name = ANIMATION_WEIGHTS[0].0;
+        for &(candidate, weight) in ANIMATION_WEIGHTS {
             if roll < weight {
                 name = candidate;
                 break;
             }
             roll -= weight;
         }
-        let spread = BEHAVIOUR_SPREAD.as_millis() as u32;
-        self.remaining = MIN_BEHAVIOUR + Duration::from_millis((random() % spread) as u64);
-        if name == "walk" {
-            self.facing_left = random() % 2 == 1;
-        }
+        let spread = HOLD_SPREAD.as_millis() as u32;
+        self.until_next_choice = MIN_HOLD + Duration::from_millis((random() % spread) as u64);
         if name != self.animation {
             self.animation = name;
             self.played = Duration::ZERO;
+        }
+        if self.walking() {
+            self.facing_left = random() % 2 == 1;
         }
     }
 }

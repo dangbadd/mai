@@ -21,16 +21,21 @@ fn write_png(path: &Path, width: u32, height: u32) {
         .unwrap();
 }
 
-const MANIFEST: &str = "[idle]
+/// A manifest section for every required Animation except `skip`.
+fn manifest_without(skip: &str) -> String {
+    assets::REQUIRED
+        .iter()
+        .filter(|&&a| a != skip)
+        .map(|a| {
+            format!(
+                "[{a}]
 fps = 8
 loop = true
-[walk]
-fps = 8
-loop = true
-[sit]
-fps = 8
-loop = true
-";
+"
+            )
+        })
+        .collect()
+}
 
 /// A folder holding every required Animation as a 4-frame 64px strip.
 fn valid(name: &str) -> PathBuf {
@@ -38,7 +43,7 @@ fn valid(name: &str) -> PathBuf {
     for anim in assets::REQUIRED {
         write_png(&dir.join(format!("{anim}.png")), 64 * 4, 64);
     }
-    fs::write(dir.join("character.toml"), MANIFEST).unwrap();
+    fs::write(dir.join("character.toml"), manifest_without("")).unwrap();
     dir
 }
 
@@ -122,23 +127,24 @@ fn opaque_rgb_png_loads_as_fully_opaque_rgba() {
 }
 
 #[test]
-fn walk_missing_from_manifest_is_an_asset_error() {
-    let dir = valid("no-walk");
-    fs::write(
-        dir.join("character.toml"),
-        MANIFEST.replace("[walk]", "[walking]"),
-    )
-    .unwrap();
+fn every_required_animation_missing_from_manifest_is_an_asset_error() {
+    for &anim in assets::REQUIRED {
+        let dir = valid(&format!("no-section-{anim}"));
+        fs::write(dir.join("character.toml"), manifest_without(anim)).unwrap();
 
-    let e = load_err(&dir);
-    assert_eq!(e.file, dir.join("character.toml"));
-    assert!(e.reason.contains("walk"), "{}", e.reason);
+        let e = load_err(&dir);
+        assert_eq!(e.file, dir.join("character.toml"), "{anim}");
+        assert!(e.reason.contains(anim), "{}", e.reason);
+    }
 }
 
 #[test]
-fn missing_sit_png_names_the_png() {
-    let dir = valid("no-sit");
-    fs::remove_file(dir.join("sit.png")).unwrap();
+fn every_required_png_missing_is_an_asset_error_naming_it() {
+    for &anim in assets::REQUIRED {
+        let dir = valid(&format!("no-png-{anim}"));
+        let png = dir.join(format!("{anim}.png"));
+        fs::remove_file(&png).unwrap();
 
-    assert_eq!(load_err(&dir).file, dir.join("sit.png"));
+        assert_eq!(load_err(&dir).file, png);
+    }
 }
