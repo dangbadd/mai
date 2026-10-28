@@ -85,3 +85,21 @@ fn animation_missing_from_manifest_names_character_toml() {
     assert_eq!(e.file, dir.join("character.toml"));
     assert!(e.reason.contains("idle"), "{}", e.reason);
 }
+
+#[test]
+fn opaque_rgb_png_loads_as_fully_opaque_rgba() {
+    let dir = fixture("rgb");
+    let file = fs::File::create(dir.join("idle.png")).unwrap();
+    let mut enc = png::Encoder::new(file, 2, 1);
+    enc.set_color(png::ColorType::Rgb);
+    enc.set_depth(png::BitDepth::Eight);
+    enc.write_header()
+        .unwrap()
+        .write_image_data(&[10, 20, 30, 40, 50, 60])
+        .unwrap();
+    fs::write(dir.join("character.toml"), "[idle]\nfps = 8\nloop = true\n").unwrap();
+
+    let idle = &assets::load(&dir).unwrap()["idle"];
+    assert_eq!(idle.clip.frames, 2);
+    assert_eq!(idle.rgba, [10, 20, 30, 255, 40, 50, 60, 255]);
+}

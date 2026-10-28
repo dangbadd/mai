@@ -4,6 +4,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Instant;
 
 use mai::assets::{self, Animation};
@@ -22,6 +23,8 @@ const BASE_SIZE: u32 = 128;
 const WM_TRAY: u32 = WM_APP + 1;
 const TIMER_ID: usize = 1;
 const CMD_QUIT: u32 = 1;
+/// Broadcast by Explorer when the taskbar is recreated, which drops every tray icon.
+static WM_TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 
 struct App {
     hwnd: HWND,
@@ -129,6 +132,10 @@ unsafe fn run(animations: HashMap<String, Animation>) -> windows::core::Result<(
         });
         tick();
         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        WM_TASKBAR_CREATED.store(
+            RegisterWindowMessageW(w!("TaskbarCreated")),
+            Ordering::Relaxed,
+        );
         add_tray_icon(hwnd)?;
         // shortcut: fixed to idle's fps; schedule per Animation once other Animations exist.
         SetTimer(Some(hwnd), TIMER_ID, 1000 / fps, None);
@@ -342,6 +349,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 show_tray_menu(hwnd)
             }
             WM_DESTROY => PostQuitMessage(0),
+            _ if msg != 0 && msg == WM_TASKBAR_CREATED.load(Ordering::Relaxed) => {
+                let _ = add_tray_icon(hwnd);
+            }
             _ => return DefWindowProcW(hwnd, msg, wparam, lparam),
         }
         LRESULT(0)
