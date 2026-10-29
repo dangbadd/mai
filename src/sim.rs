@@ -102,6 +102,17 @@ impl Character {
         random: &mut dyn FnMut() -> u32,
     ) -> Draw {
         self.played += elapsed;
+        // The Ground moves when the taskbar does: drop onto a lower one, step onto a higher one.
+        if !self.held() {
+            self.x = self.x.clamp(world.left as f64, world.right as f64);
+            if self.y < world.ground_y as f64 {
+                self.resume = None;
+                (self.animation, self.played) = ("fall", Duration::ZERO);
+                self.fall_speed = 0.0;
+            } else {
+                self.y = world.ground_y as f64;
+            }
+        }
         match self.animation {
             "fall" => self.fall(elapsed, world),
             "land" if self.played_through() => {

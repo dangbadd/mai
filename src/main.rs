@@ -25,6 +25,7 @@ use windows::core::{HSTRING, PCWSTR, w};
 /// Character height at 100% display scale.
 const BASE_SIZE: u32 = 128;
 const WM_TRAY: u32 = WM_APP + 1;
+const WM_APPBAR: u32 = WM_APP + 2;
 const TIMER_ID: usize = 1;
 const CMD_QUIT: u32 = 1;
 const CMD_VISIBLE: u32 = 2;
@@ -48,6 +49,10 @@ struct App {
     interval: Duration,
     /// Mouse input received since the last step.
     events: Vec<MouseEvent>,
+    /// The user's Hide/Show choice from the menu.
+    shown: bool,
+    /// An app is fullscreen on the primary monitor, which hides the Character too.
+    fullscreen: bool,
 }
 
 thread_local! {
@@ -140,15 +145,19 @@ unsafe fn run(animations: HashMap<String, Animation>) -> windows::core::Result<(
                 last_tick: Instant::now(),
                 interval: Duration::ZERO,
                 events: Vec::new(),
+                shown: true,
+                fullscreen: false,
             })
         });
-        tick();
+        // A layered window shows nothing until its first frame, so showing before it does not flash.
         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        tick();
         WM_TASKBAR_CREATED.store(
             RegisterWindowMessageW(w!("TaskbarCreated")),
             Ordering::Relaxed,
         );
         add_tray_icon(hwnd)?;
+        register_appbar(hwnd);
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -260,6 +269,22 @@ unsafe fn add_tray_icon(hwnd: HWND) -> windows::core::Result<()> {
     }
 }
 
+/// An appbar that reserves no space: registering one is how the shell reports fullscreen apps,
+/// with `ABN_FULLSCREENAPP`, so no polling is needed.
+unsafe fn register_appbar(hwnd: HWND) {
+    let mut data = appbar_data(hwnd);
+    data.uCallbackMessage = WM_APPBAR;
+    unsafe { SHAppBarMessage(ABM_NEW, &mut data) };
+}
+
+fn appbar_data(hwnd: HWND) -> APPBARDATA {
+    APPBARDATA {
+        cbSize: size_of::<APPBARDATA>() as u32,
+        hWnd: hwnd,
+        ..Default::default()
+    }
+}
+
 fn tray_data(hwnd: HWND) -> NOTIFYICONDATAW {
     NOTIFYICONDATAW {
         cbSize: size_of::<NOTIFYICONDATAW>() as u32,
@@ -271,9 +296,13 @@ fn tray_data(hwnd: HWND) -> NOTIFYICONDATAW {
 
 /// Steps the simulation by the real time since the last tick, redraws only if the frame or position
 /// changed, and re-arms the timer when the step rate changes (fast while walking, slow otherwise).
+/// Does nothing while hidden, so input queued then, like a drop, plays out once shown again.
 fn tick() {
     APP.with_borrow_mut(|app| {
         let Some(app) = app else { return };
+        if !unsafe { IsWindowVisible(app.hwnd) }.as_bool() {
+            return;
+        }
         let now = Instant::now();
         let draw = app
             .character
@@ -356,7 +385,7 @@ fn rand_u32() -> u32 {
 unsafe fn show_menu(hwnd: HWND) {
     unsafe {
         let Ok(menu) = CreatePopupMenu() else { return };
-        let visible = IsWindowVisible(hwnd).as_bool();
+        let visible = APP.with_borrow(|app| app.as_ref().is_some_and(|app| app.shown));
         let autostart = autostart_enabled();
         let check = if autostart { MF_CHECKED } else { MF_UNCHECKED };
         let _ = AppendMenuW(
@@ -390,7 +419,14 @@ unsafe fn show_menu(hwnd: HWND) {
         let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
         let _ = DestroyMenu(menu);
         match cmd.0 as u32 {
-            CMD_VISIBLE => set_visible(hwnd, !visible),
+            CMD_VISIBLE => {
+                APP.with_borrow_mut(|app| {
+                    if let Some(app) = app {
+                        app.shown = !visible;
+                    }
+                });
+                update_visibility(hwnd);
+            }
             CMD_AUTOSTART => {
                 if let Err(e) = set_autostart(!autostart) {
                     MessageBoxW(
@@ -403,6 +439,7 @@ unsafe fn show_menu(hwnd: HWND) {
             }
             CMD_QUIT => {
                 let _ = Shell_NotifyIconW(NIM_DELETE, &tray_data(hwnd));
+                SHAppBarMessage(ABM_REMOVE, &mut appbar_data(hwnd));
                 let _ = DestroyWindow(hwnd);
             }
             _ => {}
@@ -410,9 +447,14 @@ unsafe fn show_menu(hwnd: HWND) {
     }
 }
 
-/// Hiding stops the step timer, so the Character is frozen and shows again where it was.
-unsafe fn set_visible(hwnd: HWND, show: bool) {
+/// Shows the Character when the user wants it and nothing is fullscreen. Hiding stops the step
+/// timer, so the Character is frozen and shows again where it was.
+unsafe fn update_visibility(hwnd: HWND) {
     unsafe {
+        let show = APP.with_borrow(|app| app.as_ref().is_some_and(|a| a.shown && !a.fullscreen));
+        if show == IsWindowVisible(hwnd).as_bool() {
+            return;
+        }
         APP.with_borrow_mut(|app| {
             let Some(app) = app else { return };
             // A zero interval makes the next tick re-arm the timer.
@@ -492,9 +534,30 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             WM_TRAY if matches!(lparam.0 as u32, WM_RBUTTONUP | WM_CONTEXTMENU) => show_menu(hwnd),
             // DefWindowProc sends this after a right-click on the Character.
             WM_CONTEXTMENU => show_menu(hwnd),
+            WM_APPBAR if wparam.0 as u32 == ABN_FULLSCREENAPP => {
+                APP.with_borrow_mut(|app| {
+                    if let Some(app) = app {
+                        app.fullscreen = lparam.0 != 0;
+                    }
+                });
+                update_visibility(hwnd);
+            }
+            // Sent when the taskbar moves or toggles auto-hide, which moves the Ground.
+            WM_SETTINGCHANGE if wparam.0 as u32 == SPI_SETWORKAREA.0 => {
+                APP.with_borrow_mut(|app| {
+                    if let Some(app) = app
+                        && let Ok(world) = primary_world(app.size)
+                    {
+                        app.world = world;
+                    }
+                });
+                tick();
+            }
             WM_DESTROY => PostQuitMessage(0),
             _ if msg != 0 && msg == WM_TASKBAR_CREATED.load(Ordering::Relaxed) => {
                 let _ = add_tray_icon(hwnd);
+                // Explorer forgets appbars when it restarts too.
+                register_appbar(hwnd);
             }
             _ => return DefWindowProcW(hwnd, msg, wparam, lparam),
         }
