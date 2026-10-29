@@ -18,6 +18,7 @@ Each Release is built on its own release branch. Tickets land on that branch thr
   - **v<x.y.z>**: the release branch's version.
   - **issue**: the GitHub issue number. Omit it, with its dash, when the work has no issue.
   - **slug**: a few lowercase English words joined by `-`.
+- Right after creating it, set the ticket's Project Status to `In Progress` (see `issue-tracker.md`).
 - Merged into the release branch with **squash**. The repo is set to use the PR title and body as the squash commit, so the title becomes that branch's commit message, and the ticket branch is deleted on merge.
 - Right after the merge, close the ticket with a comment `Merged into release/v<x.y.z> via #<PR>`. GitHub only auto-closes issues on merges into `main`, and an open ticket would keep blocking the tickets that depend on it.
 
