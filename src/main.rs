@@ -436,7 +436,7 @@ fn autostart_enabled() -> bool {
             HKEY_CURRENT_USER,
             RUN_KEY,
             w!("Mai"),
-            RRF_RT_REG_SZ,
+            RRF_RT_ANY,
             None,
             None,
             None,
