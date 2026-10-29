@@ -370,3 +370,26 @@ fn a_drop_at_or_below_the_ground_lands_at_once() {
     let draws = drop_at(&mut mai, 960, 1060);
     assert_eq!((draws[1].animation, draws[1].y), ("land", 1040));
 }
+
+#[test]
+fn a_drag_during_react_does_not_resume_the_old_animation_later() {
+    let (mut mai, mut random) = walking(0);
+    mai.step(&[], ms(0), &NARROW, &mut random);
+    mai.step(&click(950, 1040, None), ms(0), &NARROW, &mut random);
+    let events = [
+        MouseEvent::Press { x: 950, y: 1040 },
+        MouseEvent::Move { x: 950, y: 900 },
+        MouseEvent::Release { x: 950, y: 900 },
+    ];
+    assert_eq!(
+        mai.step(&events, ms(0), &NARROW, &mut random).animation,
+        "fall"
+    );
+    for _ in 0..60 {
+        mai.step(&[], ms(33), &NARROW, &mut random);
+    }
+    // The rolls ran out, so autonomous behaviour picked idle; react must come back to it, not walk.
+    mai.step(&click(950, 1040, None), ms(0), &NARROW, &mut random);
+    let draw = mai.step(&[], ms(600), &NARROW, &mut random);
+    assert_eq!(draw.animation, "idle");
+}
