@@ -1,0 +1,33 @@
+# fps: frames per second; loop: restart after the last frame.
+[idle]
+fps = 4
+loop = true
+
+# Sprites face right; walking left mirrors them.
+[walk]
+fps = 8
+loop = true
+
+[sit]
+fps = 1
+loop = true
+
+# Played once when clicked, then the previous Animation resumes.
+[react]
+fps = 8
+loop = false
+
+# Shown while the user drags the Character.
+[dragged]
+fps = 4
+loop = true
+
+# Shown while dropping toward the Ground after a drag.
+[fall]
+fps = 6
+loop = true
+
+# Played once on reaching the Ground, then autonomous behaviour resumes.
+[land]
+fps = 8
+loop = false

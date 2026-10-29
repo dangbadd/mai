@@ -13,6 +13,11 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 - **Comment on an issue**: `gh issue comment <number> --body "..."`
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
 - **Close**: post the explanation with `gh issue comment <number> --body "..."`, then `gh issue close <number>`. On an already-closed issue, `gh issue close --comment` drops the comment and still exits 0.
+- **Set Project Status to In Progress**: tickets sit on the [`mai` Project](https://github.com/users/dangbadd/projects/1). The Project's own "Item closed" workflow moves a closed issue to `Done`; only `In Progress` is set by hand:
+  ```bash
+  item=$(gh project item-list 1 --owner dangbadd --format json --limit 200 --jq '.items[] | select(.content.number==<n>) | .id')
+  gh project item-edit --project-id PVT_kwHODjCh0s4BpFR3 --id "$item" --field-id PVTSSF_lAHODjCh0s4BpFR3zhnid1M --single-select-option-id 47fc9ee4
+  ```
 
 Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
 

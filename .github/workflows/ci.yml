@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  pull_request:
+    paths-ignore: ["docs/**", "**/*.md"]
+  # Runs on release branches too, so they hold the build cache their ticket PRs restore.
+  push:
+    branches: [main, "release/**"]
+    paths-ignore: ["docs/**", "**/*.md"]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    # The crate links against the Win32 API, so it only builds on Windows.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # PR caches are only visible to that PR; save on branch pushes, where every PR can read them.
+          save-if: ${{ github.event_name == 'push' }}
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
