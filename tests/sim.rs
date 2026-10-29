@@ -393,3 +393,45 @@ fn a_drag_during_react_does_not_resume_the_old_animation_later() {
     let draw = mai.step(&[], ms(600), &NARROW, &mut random);
     assert_eq!(draw.animation, "idle");
 }
+
+#[test]
+fn a_lower_ground_makes_a_standing_character_fall_onto_it() {
+    let mut mai = idle_at(10, 4);
+    mai.step(&[], ms(0), &WORLD, &mut no_random);
+    let lower = World {
+        ground_y: 1080,
+        ..WORLD
+    };
+    let mut draws = vec![mai.step(&[], ms(33), &lower, &mut no_random)];
+    for _ in 0..30 {
+        draws.push(mai.step(&[], ms(33), &lower, &mut no_random));
+    }
+    assert_eq!(draws[0].animation, "fall");
+    let last = draws.last().unwrap();
+    assert_eq!((last.x, last.y), (960, 1080));
+}
+
+#[test]
+fn a_higher_or_narrower_ground_moves_a_standing_character_onto_it() {
+    let mut mai = idle_at(10, 4);
+    mai.step(&[], ms(0), &WORLD, &mut no_random);
+    let smaller = World {
+        ground_y: 1000,
+        left: 0,
+        right: 800,
+    };
+    let draw = mai.step(&[], ms(33), &smaller, &mut no_random);
+    assert_eq!((draw.animation, draw.x, draw.y), ("idle", 800, 1000));
+}
+
+#[test]
+fn a_ground_change_does_not_move_a_dragged_character() {
+    let mut mai = idle_at(10, 4);
+    drag_to(&mut mai, 500, 500);
+    let lower = World {
+        ground_y: 1080,
+        ..WORLD
+    };
+    let draw = mai.step(&[], ms(33), &lower, &mut no_random);
+    assert_eq!((draw.animation, draw.x, draw.y), ("dragged", 500, 500));
+}
