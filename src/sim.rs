@@ -31,7 +31,7 @@ pub struct World {
     pub right: i32,
 }
 
-/// Mouse input since the last step, in screen pixels. Only presses on the Character arrive.
+/// Mouse input since the last step, in screen pixels. Only input over the Character's visible pixels arrives.
 #[derive(Clone, Copy, Debug)]
 pub enum MouseEvent {
     Press { x: i32, y: i32 },
