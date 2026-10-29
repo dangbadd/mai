@@ -4,6 +4,8 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::ffi::OsString;
+use std::os::windows::ffi::OsStrExt;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
@@ -12,18 +14,22 @@ use mai::sim::{Character, Clip, Draw, MouseEvent, World};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::Registry::*;
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::HiDpi::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::Shell::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
-use windows::core::{HSTRING, w};
+use windows::core::{HSTRING, PCWSTR, w};
 
 /// Character height at 100% display scale.
 const BASE_SIZE: u32 = 128;
 const WM_TRAY: u32 = WM_APP + 1;
 const TIMER_ID: usize = 1;
 const CMD_QUIT: u32 = 1;
+const CMD_VISIBLE: u32 = 2;
+const CMD_AUTOSTART: u32 = 3;
+const RUN_KEY: PCWSTR = w!(r"Software\Microsoft\Windows\CurrentVersion\Run");
 /// Broadcast by Explorer when the taskbar is recreated, which drops every tray icon.
 static WM_TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 
@@ -346,9 +352,26 @@ fn rand_u32() -> u32 {
     std::hash::RandomState::new().hash_one(0u8) as u32
 }
 
-unsafe fn show_tray_menu(hwnd: HWND) {
+/// The same menu opens from the tray icon and from right-clicking the Character.
+unsafe fn show_menu(hwnd: HWND) {
     unsafe {
         let Ok(menu) = CreatePopupMenu() else { return };
+        let visible = IsWindowVisible(hwnd).as_bool();
+        let autostart = autostart_enabled();
+        let check = if autostart { MF_CHECKED } else { MF_UNCHECKED };
+        let _ = AppendMenuW(
+            menu,
+            MF_STRING,
+            CMD_VISIBLE as usize,
+            if visible { w!("Hide") } else { w!("Show") },
+        );
+        let _ = AppendMenuW(
+            menu,
+            MF_STRING | check,
+            CMD_AUTOSTART as usize,
+            w!("Start with Windows"),
+        );
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
         let _ = AppendMenuW(menu, MF_STRING, CMD_QUIT as usize, w!("Quit"));
         let mut cursor = POINT::default();
         let _ = GetCursorPos(&mut cursor);
@@ -366,10 +389,80 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         // Documented workaround so the next tray click opens the menu instead of only closing it.
         let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
         let _ = DestroyMenu(menu);
-        if cmd.0 as u32 == CMD_QUIT {
-            let _ = Shell_NotifyIconW(NIM_DELETE, &tray_data(hwnd));
-            let _ = DestroyWindow(hwnd);
+        match cmd.0 as u32 {
+            CMD_VISIBLE => set_visible(hwnd, !visible),
+            CMD_AUTOSTART => {
+                if let Err(e) = set_autostart(!autostart) {
+                    MessageBoxW(
+                        Some(hwnd),
+                        &HSTRING::from(e.message()),
+                        w!("Mai"),
+                        MB_OK | MB_ICONERROR,
+                    );
+                }
+            }
+            CMD_QUIT => {
+                let _ = Shell_NotifyIconW(NIM_DELETE, &tray_data(hwnd));
+                let _ = DestroyWindow(hwnd);
+            }
+            _ => {}
         }
+    }
+}
+
+/// Hiding stops the step timer, so the Character is frozen and shows again where it was.
+unsafe fn set_visible(hwnd: HWND, show: bool) {
+    unsafe {
+        APP.with_borrow_mut(|app| {
+            let Some(app) = app else { return };
+            // A zero interval makes the next tick re-arm the timer.
+            app.interval = Duration::ZERO;
+            app.last_tick = Instant::now();
+        });
+        if show {
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            tick();
+        } else {
+            let _ = KillTimer(Some(hwnd), TIMER_ID);
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        }
+    }
+}
+
+/// Whether the current user's Run key has a `Mai` entry, wherever it points.
+fn autostart_enabled() -> bool {
+    unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            RUN_KEY,
+            w!("Mai"),
+            RRF_RT_REG_SZ,
+            None,
+            None,
+            None,
+        ) == ERROR_SUCCESS
+    }
+}
+
+fn set_autostart(on: bool) -> windows::core::Result<()> {
+    unsafe {
+        if !on {
+            return RegDeleteKeyValueW(HKEY_CURRENT_USER, RUN_KEY, w!("Mai")).ok();
+        }
+        // Quoted so a path with spaces is read as one program.
+        let mut command = OsString::from("\"");
+        command.push(std::env::current_exe().unwrap());
+        command.push("\"");
+        let data: Vec<u16> = command.encode_wide().chain([0]).collect();
+        RegSetKeyValueW(
+            HKEY_CURRENT_USER,
+            RUN_KEY,
+            w!("Mai"),
+            REG_SZ.0,
+            Some(data.as_ptr().cast()),
+            (data.len() * 2) as u32,
+        )
+        .ok()
     }
 }
 
@@ -396,9 +489,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 push_mouse(|x, y| MouseEvent::Release { x, y });
                 tick();
             }
-            WM_TRAY if matches!(lparam.0 as u32, WM_RBUTTONUP | WM_CONTEXTMENU) => {
-                show_tray_menu(hwnd)
-            }
+            WM_TRAY if matches!(lparam.0 as u32, WM_RBUTTONUP | WM_CONTEXTMENU) => show_menu(hwnd),
+            // DefWindowProc sends this after a right-click on the Character.
+            WM_CONTEXTMENU => show_menu(hwnd),
             WM_DESTROY => PostQuitMessage(0),
             _ if msg != 0 && msg == WM_TASKBAR_CREATED.load(Ordering::Relaxed) => {
                 let _ = add_tray_icon(hwnd);
