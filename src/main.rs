@@ -149,8 +149,9 @@ unsafe fn run(animations: HashMap<String, Animation>) -> windows::core::Result<(
                 fullscreen: false,
             })
         });
-        tick();
+        // A layered window shows nothing until its first frame, so showing before it does not flash.
         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        tick();
         WM_TASKBAR_CREATED.store(
             RegisterWindowMessageW(w!("TaskbarCreated")),
             Ordering::Relaxed,
@@ -295,9 +296,13 @@ fn tray_data(hwnd: HWND) -> NOTIFYICONDATAW {
 
 /// Steps the simulation by the real time since the last tick, redraws only if the frame or position
 /// changed, and re-arms the timer when the step rate changes (fast while walking, slow otherwise).
+/// Does nothing while hidden, so input queued then, like a drop, plays out once shown again.
 fn tick() {
     APP.with_borrow_mut(|app| {
         let Some(app) = app else { return };
+        if !unsafe { IsWindowVisible(app.hwnd) }.as_bool() {
+            return;
+        }
         let now = Instant::now();
         let draw = app
             .character
@@ -546,10 +551,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                         app.world = world;
                     }
                 });
-                // While hidden the next show steps onto the new Ground.
-                if IsWindowVisible(hwnd).as_bool() {
-                    tick();
-                }
+                tick();
             }
             WM_DESTROY => PostQuitMessage(0),
             _ if msg != 0 && msg == WM_TASKBAR_CREATED.load(Ordering::Relaxed) => {
