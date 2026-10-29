@@ -21,6 +21,8 @@ const MOVE_HZ: u32 = 30;
 /// How far the mouse may move between press and release and still count as a click, like
 /// Windows' default drag threshold.
 const CLICK_SLOP: i32 = 4;
+/// Downward acceleration of a dropped Character, in screen pixels per second squared.
+const GRAVITY: f64 = 2500.0;
 
 /// Where the Character may be: the Ground line and the range its bottom-centre may take, in
 /// screen pixels.
@@ -31,7 +33,8 @@ pub struct World {
     pub right: i32,
 }
 
-/// Mouse input since the last step, in screen pixels. Only input over the Character's visible pixels arrives.
+/// Mouse input since the last step, in screen pixels. Only input over the Character's visible pixels
+/// arrives, except while the button is held down after a press on them.
 #[derive(Clone, Copy, Debug)]
 pub enum MouseEvent {
     Press { x: i32, y: i32 },
@@ -60,9 +63,13 @@ pub struct Character {
     until_next_choice: Duration,
     facing_left: bool,
     x: f64,
-    y: i32,
+    y: f64,
     /// Where the button went down, until the mouse moves too far for a click.
     press: Option<(i32, i32)>,
+    /// While dragged: the offset from the cursor to the bottom-centre.
+    grab: (f64, f64),
+    /// While falling: downward speed in pixels per second.
+    fall_speed: f64,
     /// While reacting: the Animation to go back to and how far it had played.
     resume: Option<(&'static str, Duration)>,
 }
@@ -78,8 +85,10 @@ impl Character {
             until_next_choice: Duration::ZERO,
             facing_left: false,
             x: x as f64,
-            y: world.ground_y,
+            y: world.ground_y as f64,
             press: None,
+            grab: (0.0, 0.0),
+            fall_speed: 0.0,
             resume: None,
         }
     }
@@ -93,14 +102,20 @@ impl Character {
         random: &mut dyn FnMut() -> u32,
     ) -> Draw {
         self.played += elapsed;
-        let react = self.clips["react"];
-        if let Some((animation, played)) = self.resume
-            && self.played >= Duration::from_secs(react.frames as u64) / react.fps
-        {
-            (self.animation, self.played, self.resume) = (animation, played, None);
+        match self.animation {
+            "fall" => self.fall(elapsed, world),
+            "land" if self.played_through() => {
+                (self.animation, self.played) = ("idle", Duration::ZERO);
+                self.until_next_choice = Duration::ZERO;
+            }
+            "react" if self.played_through() => {
+                let (animation, played) = self.resume.take().unwrap();
+                (self.animation, self.played) = (animation, played);
+            }
+            _ => {}
         }
-        // Reacting pauses walking and the countdown to the next choice.
-        if self.resume.is_none() {
+        // Reacting, being dragged, falling and landing pause walking and the next choice.
+        if !self.held() && self.animation != "react" {
             if self.walking() {
                 self.walk(elapsed, world);
             }
@@ -124,14 +139,14 @@ impl Character {
             animation: self.animation,
             frame: frame as u32,
             x: self.x.round() as i32,
-            y: self.y,
+            y: self.y.round() as i32,
             mirrored: self.walking() && self.facing_left,
         }
     }
 
     /// How long the shell may wait before the next step changes what is drawn.
     pub fn next_step_in(&self) -> Duration {
-        let fps = if self.walking() {
+        let fps = if self.walking() || self.animation == "fall" {
             MOVE_HZ
         } else {
             self.clips[self.animation].fps
@@ -144,16 +159,55 @@ impl Character {
             p.is_some_and(|(px, py)| (x - px).abs() <= CLICK_SLOP && (y - py).abs() <= CLICK_SLOP)
         };
         match event {
-            MouseEvent::Press { x, y } => self.press = Some((x, y)),
-            MouseEvent::Move { x, y } if !near(self.press, x, y) => self.press = None,
+            MouseEvent::Press { x, y } if !self.held() => self.press = Some((x, y)),
+            MouseEvent::Move { x, y } => {
+                if let Some((px, py)) = self.press
+                    && !near(self.press, x, y)
+                {
+                    self.press = None;
+                    self.resume = None;
+                    self.grab = (self.x - px as f64, self.y - py as f64);
+                    (self.animation, self.played) = ("dragged", Duration::ZERO);
+                }
+                if self.animation == "dragged" {
+                    self.x = x as f64 + self.grab.0;
+                    self.y = y as f64 + self.grab.1;
+                }
+            }
             MouseEvent::Release { x, y } => {
                 let pressed = self.press.take();
-                if near(pressed, x, y) {
+                if self.animation == "dragged" {
+                    (self.animation, self.played) = ("fall", Duration::ZERO);
+                    self.fall_speed = 0.0;
+                } else if near(pressed, x, y) {
                     self.react();
                 }
             }
             _ => {}
         }
+    }
+
+    /// Drops toward the Ground; on contact, lands there pulled fully on screen.
+    fn fall(&mut self, elapsed: Duration, world: &World) {
+        let t = elapsed.as_secs_f64();
+        self.fall_speed += GRAVITY * t;
+        self.y += self.fall_speed * t;
+        if self.y >= world.ground_y as f64 {
+            self.y = world.ground_y as f64;
+            self.x = self.x.clamp(world.left as f64, world.right as f64);
+            (self.animation, self.played) = ("land", Duration::ZERO);
+        }
+    }
+
+    /// The user has the Character: dragging, falling or landing.
+    fn held(&self) -> bool {
+        matches!(self.animation, "dragged" | "fall" | "land")
+    }
+
+    /// Whether the current Animation has shown all its frames once.
+    fn played_through(&self) -> bool {
+        let clip = self.clips[self.animation];
+        self.played >= Duration::from_secs(clip.frames as u64) / clip.fps
     }
 
     /// Plays `react` from its first frame; a click while reacting restarts it.

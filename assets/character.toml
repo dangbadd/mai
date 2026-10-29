@@ -16,3 +16,18 @@ loop = true
 [react]
 fps = 8
 loop = false
+
+# Shown while the user drags the Character.
+[dragged]
+fps = 4
+loop = true
+
+# Shown while dropping toward the Ground after a drag.
+[fall]
+fps = 6
+loop = true
+
+# Played once on reaching the Ground, then autonomous behaviour resumes.
+[land]
+fps = 8
+loop = false

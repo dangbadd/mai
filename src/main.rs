@@ -14,6 +14,7 @@ use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::HiDpi::*;
+use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::Shell::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::{HSTRING, w};
@@ -376,11 +377,23 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
     unsafe {
         match msg {
             WM_TIMER if wparam.0 == TIMER_ID => tick(),
-            WM_LBUTTONDOWN => push_mouse(|x, y| MouseEvent::Press { x, y }),
-            WM_MOUSEMOVE => push_mouse(|x, y| MouseEvent::Move { x, y }),
+            WM_LBUTTONDOWN => {
+                // Keeps input coming while dragged, even when the cursor outruns the window.
+                SetCapture(hwnd);
+                push_mouse(|x, y| MouseEvent::Press { x, y });
+            }
+            WM_MOUSEMOVE => {
+                push_mouse(|x, y| MouseEvent::Move { x, y });
+                // Follow the cursor now rather than on the next timer, which may be up to a second away.
+                tick();
+            }
+            // Sends WM_CAPTURECHANGED, which releases.
             WM_LBUTTONUP => {
+                let _ = ReleaseCapture();
+            }
+            // Also arrives when another window takes the capture mid-drag, which drops the Character.
+            WM_CAPTURECHANGED => {
                 push_mouse(|x, y| MouseEvent::Release { x, y });
-                // React now rather than on the next timer, which may be up to a second away.
                 tick();
             }
             WM_TRAY if matches!(lparam.0 as u32, WM_RBUTTONUP | WM_CONTEXTMENU) => {

@@ -17,20 +17,23 @@ fn clip(fps: u32, frames: u32) -> Clip {
     }
 }
 
+fn once(fps: u32, frames: u32) -> Clip {
+    Clip {
+        looping: false,
+        ..clip(fps, frames)
+    }
+}
+
 /// Every required Animation, with `idle` timed as given.
 fn character(idle: Clip, world: &World) -> Character {
     let clips = HashMap::from([
         ("idle".to_string(), idle),
         ("walk".to_string(), clip(8, 4)),
         ("sit".to_string(), clip(2, 2)),
-        (
-            "react".to_string(),
-            Clip {
-                frames: 5,
-                fps: 10,
-                looping: false,
-            },
-        ),
+        ("react".to_string(), once(10, 5)),
+        ("dragged".to_string(), clip(4, 2)),
+        ("fall".to_string(), clip(6, 2)),
+        ("land".to_string(), once(10, 3)),
     ]);
     Character::new(clips, world)
 }
@@ -244,15 +247,19 @@ fn walking_resumes_in_place_after_react() {
 }
 
 #[test]
-fn press_and_release_after_moving_away_is_not_a_click() {
+fn moving_beyond_the_threshold_drags_instead_of_clicking() {
     let mut mai = idle_at(10, 4);
+    let press = MouseEvent::Press { x: 960, y: 1000 };
+    let draw = mai.step(&[press], ms(0), &WORLD, &mut no_random);
+    assert_eq!(draw.animation, "idle", "a press alone does nothing yet");
+
     let draw = mai.step(
-        &click(960, 1000, Some((990, 1000))),
+        &click(960, 1000, Some((965, 1000))),
         ms(0),
         &WORLD,
         &mut no_random,
     );
-    assert_eq!(draw.animation, "idle");
+    assert_eq!(draw.animation, "fall", "released after a drag, not a click");
 }
 
 #[test]
@@ -265,4 +272,101 @@ fn a_small_wobble_still_counts_as_a_click() {
         &mut no_random,
     );
     assert_eq!(draw.animation, "react");
+}
+
+/// Grabs the Character at its anchor and moves the cursor to `(x, y)` without releasing.
+fn drag_to(mai: &mut Character, x: i32, y: i32) -> mai::sim::Draw {
+    let events = [
+        MouseEvent::Press { x: 960, y: 1040 },
+        MouseEvent::Move { x, y },
+    ];
+    mai.step(&events, ms(0), &WORLD, &mut no_random)
+}
+
+/// Releases at `(x, y)` and steps at 30Hz until `land` has played, returning every Draw.
+fn drop_at(mai: &mut Character, x: i32, y: i32) -> Vec<mai::sim::Draw> {
+    let mut draws = vec![mai.step(
+        &[MouseEvent::Release { x, y }],
+        ms(0),
+        &WORLD,
+        &mut no_random,
+    )];
+    for _ in 0..90 {
+        draws.push(mai.step(&[], ms(33), &WORLD, &mut no_random));
+    }
+    draws
+}
+
+#[test]
+fn dragging_follows_the_cursor_from_where_it_was_grabbed() {
+    let mut mai = idle_at(10, 4);
+    let events = [
+        MouseEvent::Press { x: 950, y: 1000 },
+        MouseEvent::Move { x: 1100, y: 500 },
+    ];
+    let draw = mai.step(&events, ms(0), &WORLD, &mut no_random);
+    assert_eq!(draw.animation, "dragged");
+    assert_eq!((draw.x, draw.y), (1110, 540), "keeps the grab offset");
+
+    let draw = mai.step(
+        &[MouseEvent::Move { x: 200, y: 100 }],
+        ms(0),
+        &WORLD,
+        &mut no_random,
+    );
+    assert_eq!((draw.animation, draw.x, draw.y), ("dragged", 210, 140));
+}
+
+#[test]
+fn a_drop_above_the_ground_falls_then_lands_then_resumes() {
+    let mut mai = idle_at(10, 4);
+    drag_to(&mut mai, 960, 540);
+    let draws = drop_at(&mut mai, 960, 540);
+
+    assert_eq!(draws[0].animation, "fall");
+    let landed = draws
+        .iter()
+        .position(|d| d.animation == "land")
+        .expect("lands");
+    let falling = &draws[..landed];
+    assert!(falling.iter().all(|d| d.animation == "fall"));
+    assert!(
+        falling.windows(2).all(|w| w[1].y > w[0].y),
+        "drops every step"
+    );
+    assert!(
+        falling.iter().all(|d| d.y < 1040),
+        "above the Ground until landing"
+    );
+    assert_eq!((draws[landed].x, draws[landed].y), (960, 1040));
+
+    // land is 3 frames at 10fps: 300ms, about 9 steps.
+    let after = &draws[landed + 10..];
+    assert!(!after.is_empty());
+    assert!(
+        after
+            .iter()
+            .all(|d| ["idle", "walk", "sit"].contains(&d.animation)),
+        "back to autonomous behaviour"
+    );
+}
+
+#[test]
+fn a_drop_partly_off_screen_lands_fully_on_screen() {
+    for (x, expected) in [(-40, WORLD.left), (1950, WORLD.right)] {
+        let mut mai = idle_at(10, 4);
+        let draw = drag_to(&mut mai, x, 700);
+        assert_eq!(draw.x, x, "may be dragged off screen");
+        let draws = drop_at(&mut mai, x, 700);
+        let last = draws.last().unwrap();
+        assert_eq!((last.x, last.y), (expected, 1040));
+    }
+}
+
+#[test]
+fn a_drop_at_or_below_the_ground_lands_at_once() {
+    let mut mai = idle_at(10, 4);
+    drag_to(&mut mai, 960, 1060);
+    let draws = drop_at(&mut mai, 960, 1060);
+    assert_eq!((draws[1].animation, draws[1].y), ("land", 1040));
 }
