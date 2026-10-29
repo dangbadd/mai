@@ -11,3 +11,8 @@ loop = true
 [sit]
 fps = 1
 loop = true
+
+# Played once when clicked, then the previous Animation resumes.
+[react]
+fps = 8
+loop = false

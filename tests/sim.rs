@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use mai::sim::{ANIMATION_WEIGHTS, Character, Clip, World};
+use mai::sim::{ANIMATION_WEIGHTS, Character, Clip, MouseEvent, World};
 
 const WORLD: World = World {
     ground_y: 1040,
@@ -23,6 +23,14 @@ fn character(idle: Clip, world: &World) -> Character {
         ("idle".to_string(), idle),
         ("walk".to_string(), clip(8, 4)),
         ("sit".to_string(), clip(2, 2)),
+        (
+            "react".to_string(),
+            Clip {
+                frames: 5,
+                fps: 10,
+                looping: false,
+            },
+        ),
     ]);
     Character::new(clips, world)
 }
@@ -186,4 +194,75 @@ fn walking_steps_at_30hz_while_standing_steps_at_sprite_fps() {
     let (mut mai, mut random) = walking(0);
     mai.step(&[], ms(0), &NARROW, &mut random);
     assert_eq!(mai.next_step_in(), Duration::from_secs(1) / 30);
+}
+
+/// Press and release at `(x, y)`, then `moved_to` in between when given.
+fn click(x: i32, y: i32, moved_to: Option<(i32, i32)>) -> Vec<MouseEvent> {
+    let mut events = vec![MouseEvent::Press { x, y }];
+    if let Some((x, y)) = moved_to {
+        events.push(MouseEvent::Move { x, y });
+    }
+    events.push(MouseEvent::Release { x, y });
+    events
+}
+
+#[test]
+fn a_click_plays_react_once_then_the_previous_animation_resumes() {
+    // react is 5 frames at 10fps: 500ms.
+    let mut mai = idle_at(10, 4);
+    mai.step(&[], ms(0), &WORLD, &mut no_random);
+    assert_eq!(mai.step(&[], ms(200), &WORLD, &mut no_random).frame, 2);
+
+    let draw = mai.step(&click(960, 1000, None), ms(0), &WORLD, &mut no_random);
+    assert_eq!((draw.animation, draw.frame), ("react", 0));
+    let draw = mai.step(&[], ms(450), &WORLD, &mut no_random);
+    assert_eq!((draw.animation, draw.frame), ("react", 4));
+
+    let draw = mai.step(&[], ms(100), &WORLD, &mut no_random);
+    assert_eq!(draw.animation, "idle");
+    assert_eq!(draw.frame, 2, "idle picks up where it left off");
+}
+
+#[test]
+fn walking_resumes_in_place_after_react() {
+    let (mut mai, mut random) = walking(0);
+    mai.step(&[], ms(0), &NARROW, &mut random);
+    let before = mai.step(&[], ms(100), &NARROW, &mut random);
+
+    let draw = mai.step(&click(0, 0, None), ms(0), &NARROW, &mut random);
+    assert_eq!(draw.animation, "react");
+    let draw = mai.step(&[], ms(400), &NARROW, &mut random);
+    assert_eq!(
+        (draw.animation, draw.x),
+        ("react", before.x),
+        "stands still"
+    );
+
+    let draw = mai.step(&[], ms(200), &NARROW, &mut random);
+    assert_eq!(draw.animation, "walk");
+    assert!(draw.x > before.x, "walks on to the right");
+}
+
+#[test]
+fn press_and_release_after_moving_away_is_not_a_click() {
+    let mut mai = idle_at(10, 4);
+    let draw = mai.step(
+        &click(960, 1000, Some((990, 1000))),
+        ms(0),
+        &WORLD,
+        &mut no_random,
+    );
+    assert_eq!(draw.animation, "idle");
+}
+
+#[test]
+fn a_small_wobble_still_counts_as_a_click() {
+    let mut mai = idle_at(10, 4);
+    let draw = mai.step(
+        &click(960, 1000, Some((962, 999))),
+        ms(0),
+        &WORLD,
+        &mut no_random,
+    );
+    assert_eq!(draw.animation, "react");
 }

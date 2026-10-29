@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use mai::assets::{self, Animation};
-use mai::sim::{Character, Clip, Draw, World};
+use mai::sim::{Character, Clip, Draw, MouseEvent, World};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -39,6 +39,8 @@ struct App {
     last_tick: Instant,
     /// Period the step timer currently runs at.
     interval: Duration,
+    /// Mouse input received since the last step.
+    events: Vec<MouseEvent>,
 }
 
 thread_local! {
@@ -130,6 +132,7 @@ unsafe fn run(animations: HashMap<String, Animation>) -> windows::core::Result<(
                 last_draw: None,
                 last_tick: Instant::now(),
                 interval: Duration::ZERO,
+                events: Vec::new(),
             })
         });
         tick();
@@ -267,7 +270,8 @@ fn tick() {
         let now = Instant::now();
         let draw = app
             .character
-            .step(&[], now - app.last_tick, &app.world, &mut rand_u32);
+            .step(&app.events, now - app.last_tick, &app.world, &mut rand_u32);
+        app.events.clear();
         app.last_tick = now;
         if app.last_draw != Some(draw) {
             app.last_draw = Some(draw);
@@ -323,6 +327,18 @@ unsafe fn present(app: &App, draw: Draw) {
     }
 }
 
+/// Queues a mouse event at the cursor's screen position when the message was sent. Windows only
+/// sends these for pixels the Character covers: fully transparent ones fall through.
+fn push_mouse(event: fn(i32, i32) -> MouseEvent) {
+    let pos = unsafe { GetMessagePos() };
+    let event = event(pos as i16 as i32, (pos >> 16) as i16 as i32);
+    APP.with_borrow_mut(|app| {
+        if let Some(app) = app {
+            app.events.push(event);
+        }
+    });
+}
+
 /// Each `RandomState` gets fresh SipHash keys, so hashing a constant yields a new random value.
 fn rand_u32() -> u32 {
     use std::hash::BuildHasher;
@@ -360,6 +376,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
     unsafe {
         match msg {
             WM_TIMER if wparam.0 == TIMER_ID => tick(),
+            WM_LBUTTONDOWN => push_mouse(|x, y| MouseEvent::Press { x, y }),
+            WM_MOUSEMOVE => push_mouse(|x, y| MouseEvent::Move { x, y }),
+            WM_LBUTTONUP => {
+                push_mouse(|x, y| MouseEvent::Release { x, y });
+                // React now rather than on the next timer, which may be up to a second away.
+                tick();
+            }
             WM_TRAY if matches!(lparam.0 as u32, WM_RBUTTONUP | WM_CONTEXTMENU) => {
                 show_tray_menu(hwnd)
             }

@@ -18,6 +18,9 @@ const HOLD_SPREAD: Duration = Duration::from_secs(5);
 const WALK_SPEED: f64 = 60.0;
 /// How often position is updated while walking, independent of the sprite's fps.
 const MOVE_HZ: u32 = 30;
+/// How far the mouse may move between press and release and still count as a click, like
+/// Windows' default drag threshold.
+const CLICK_SLOP: i32 = 4;
 
 /// Where the Character may be: the Ground line and the range its bottom-centre may take, in
 /// screen pixels.
@@ -28,7 +31,7 @@ pub struct World {
     pub right: i32,
 }
 
-/// Mouse input since the last step, in screen pixels. Not acted on yet.
+/// Mouse input since the last step, in screen pixels. Only presses on the Character arrive.
 #[derive(Clone, Copy, Debug)]
 pub enum MouseEvent {
     Press { x: i32, y: i32 },
@@ -58,6 +61,10 @@ pub struct Character {
     facing_left: bool,
     x: f64,
     y: i32,
+    /// Where the button went down, until the mouse moves too far for a click.
+    press: Option<(i32, i32)>,
+    /// While reacting: the Animation to go back to and how far it had played.
+    resume: Option<(&'static str, Duration)>,
 }
 
 impl Character {
@@ -72,6 +79,8 @@ impl Character {
             facing_left: false,
             x: x as f64,
             y: world.ground_y,
+            press: None,
+            resume: None,
         }
     }
 
@@ -83,14 +92,25 @@ impl Character {
         world: &World,
         random: &mut dyn FnMut() -> u32,
     ) -> Draw {
-        let _ = events;
         self.played += elapsed;
-        if self.walking() {
-            self.walk(elapsed, world);
+        let react = self.clips["react"];
+        if let Some((animation, played)) = self.resume
+            && self.played >= Duration::from_secs(react.frames as u64) / react.fps
+        {
+            (self.animation, self.played, self.resume) = (animation, played, None);
         }
-        self.until_next_choice = self.until_next_choice.saturating_sub(elapsed);
-        if self.until_next_choice.is_zero() {
-            self.choose(random);
+        // Reacting pauses walking and the countdown to the next choice.
+        if self.resume.is_none() {
+            if self.walking() {
+                self.walk(elapsed, world);
+            }
+            self.until_next_choice = self.until_next_choice.saturating_sub(elapsed);
+            if self.until_next_choice.is_zero() {
+                self.choose(random);
+            }
+        }
+        for &event in events {
+            self.mouse(event);
         }
 
         let clip = self.clips[self.animation];
@@ -117,6 +137,30 @@ impl Character {
             self.clips[self.animation].fps
         };
         Duration::from_secs(1) / fps
+    }
+
+    fn mouse(&mut self, event: MouseEvent) {
+        let near = |p: Option<(i32, i32)>, x: i32, y: i32| {
+            p.is_some_and(|(px, py)| (x - px).abs() <= CLICK_SLOP && (y - py).abs() <= CLICK_SLOP)
+        };
+        match event {
+            MouseEvent::Press { x, y } => self.press = Some((x, y)),
+            MouseEvent::Move { x, y } if !near(self.press, x, y) => self.press = None,
+            MouseEvent::Release { x, y } => {
+                let pressed = self.press.take();
+                if near(pressed, x, y) {
+                    self.react();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Plays `react` from its first frame; a click while reacting restarts it.
+    fn react(&mut self) {
+        self.resume.get_or_insert((self.animation, self.played));
+        self.animation = "react";
+        self.played = Duration::ZERO;
     }
 
     fn walking(&self) -> bool {
